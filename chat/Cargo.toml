@@ -1,0 +1,10 @@
+[package]
+name = "chat"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+tokio = { version = "1", features = ["full"] }
+httparse = "1.8"
+rustc-serialize = "0.3.15"
+sha1 = "0.1.1"
