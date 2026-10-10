@@ -1,7 +1,6 @@
 use std::collections::HashMap;
 use std::error::Error;
 use std::net::SocketAddr;
-use std::println;
 use std::sync::Arc;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
@@ -16,10 +15,61 @@ mod tests;
 
 struct WebSocketClient {
     id: usize,
-    addr: SocketAddr
+    addr: SocketAddr,
+    socket: TcpStream
 }
 
-fn gen_key(key: &String) -> String {
+impl WebSocketClient {
+    pub fn new(id: usize, addr: SocketAddr, socket: TcpStream) -> Self {
+        Self { id, addr, socket }
+    }
+
+    pub async fn run(&mut self) -> Result<(), Box<dyn Error>> {
+        let mut buf = [0; 1024];
+        let mut read_bytes = 0;
+
+        let headers = loop {
+            let n = self.socket.read(&mut buf[read_bytes..]).await?;
+            if n == 0 {
+                return Ok(());
+            }
+            read_bytes += n;
+
+            if let Some((headers, _len)) = parse_http_headers(&buf[..read_bytes])? {
+                break headers;
+            }
+        };
+
+        let ws_key = headers.get("sec-websocket-key").ok_or("Missing Sec-WebSocket-Key header")?;
+
+        let response_key = gen_key(ws_key);
+        let response = format!(
+            "HTTP/1.1 101 Switching Protocols\r\n\
+             Upgrade: websocket\r\n\
+             Connection: Upgrade\r\n\
+             Sec-WebSocket-Accept: {}\r\n\r\n",
+            response_key
+        );
+
+        self.socket.write_all(response.as_bytes()).await?;
+        self.socket.flush().await?;
+
+        println!("WebSocket upgrade complete for: {}", self.id);
+
+        loop {
+            let n = self.socket.read(&mut buf).await?;
+            if n == 0 {
+                println!("Client {} disconnected", self.id);
+                break;
+            }
+            println!("Received {} bytes from client {}", n, self.id);
+        }
+
+        Ok(())
+    }   
+}
+
+fn gen_key(key: &str) -> String {
     let mut m = sha1::Sha1::new();
     let mut buf = [0u8; 20];
 
@@ -53,7 +103,7 @@ fn parse_http_headers(buf: &[u8]) -> Result<Option<(HashMap<String, String>, usi
 
 struct WebSocketServer {
     addr: SocketAddr,
-    clients: Arc<Mutex<HashMap<usize, WebSocketClient>>>,
+    clients: Arc<Mutex<HashMap<usize, SocketAddr>>>,
     id_counter: usize
 }
 
@@ -75,18 +125,16 @@ impl WebSocketServer {
             let id = self.id_counter;
             self.id_counter += 1;
 
-            let client: WebSocketClient = WebSocketClient {
-                id,
-                addr: accept_addr,
-            };
+            let mut client = WebSocketClient::new(id, accept_addr, socket);
+
             println!("Accepted connection from: {}", client.addr);
-            self.clients.lock().await.insert(id, client);
+            self.clients.lock().await.insert(id, accept_addr);
 
             let clients_ref = Arc::clone(&self.clients);
 
             // spawn a new task to handle the client connection
             tokio::spawn(async move {
-                if let Err(e) = Self::handle_client(socket, id).await {
+                if let Err(e) = client.run().await {
                     eprintln!("Error handling client {}: {:?}", accept_addr, e);
                 }
 
@@ -95,50 +143,6 @@ impl WebSocketServer {
             });
         }
     }
-
-    async fn handle_client(mut socket: TcpStream, id: usize) -> Result<(), Box<dyn Error>> {
-        let mut buf = [0; 1024];
-        let mut read_bytes = 0;
-
-        let headers = loop {
-            let n = socket.read(&mut buf[read_bytes..]).await?;
-            if n == 0 {
-                return Ok(());
-            }
-            read_bytes += n;
-
-            if let Some((headers, _len)) = parse_http_headers(&buf[..read_bytes])? {
-                break headers;
-            }
-        };
-
-        let ws_key = headers.get("sec-websocket-key").ok_or("Missing Sec-WebSocket-Key header")?;
-
-        let response_key = gen_key(ws_key);
-        let response = format!(
-            "HTTP/1.1 101 Switching Protocols\r\n\
-             Upgrade: websocket\r\n\
-             Connection: Upgrade\r\n\
-             Sec-WebSocket-Accept: {}\r\n\r\n",
-            response_key
-        );
-
-        socket.write_all(response.as_bytes()).await?;
-        socket.flush().await?;
-
-        println!("WebSocket upgrade complete for: {}", id);
-
-        loop {
-            let n = socket.read(&mut buf).await?;
-            if n == 0 {
-                println!("Client {} disconnected", id);
-                break;
-            }
-            println!("Received {} bytes from client {}", n, id);
-        }
-
-        Ok(())
-    }   
 }
 
 #[tokio::main]
