@@ -1,17 +1,20 @@
 use std::collections::HashMap;
 use std::error::Error;
 use std::net::SocketAddr;
+use std::println;
 use std::sync::Arc;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::Mutex;
 use rustc_serialize::base64::{ToBase64, STANDARD};
+use frame::{WebSocketFrame};
 
 extern crate sha1;
 extern crate rustc_serialize;
 
 #[cfg(test)]
 mod tests;
+mod frame;
 
 struct WebSocketClient {
     id: usize,
@@ -62,7 +65,12 @@ impl WebSocketClient {
                 println!("Client {} disconnected", self.id);
                 break;
             }
-            println!("Received {} bytes from client {}", n, self.id);
+            let mut frame_data = std::io::Cursor::new(&buf[..n]);
+            let frame = WebSocketFrame::read(&mut frame_data);
+            match frame {
+                Ok(frame) => println!("{:?}", frame),
+                Err(e) => println!("Error reading frame from client {}: {:?}", self.id, e),
+            }
         }
 
         Ok(())
