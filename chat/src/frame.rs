@@ -134,6 +134,44 @@ impl WebSocketFrame {
 
     ((b1 as u16) << 8) | (b2 as u16)
   }
+
+  pub fn get_opcode(&self) -> OpCode {
+    self.header.opcode
+  }
+
+  pub fn pong(ping_frame: &WebSocketFrame) -> WebSocketFrame {
+    let payload = ping_frame.payload.clone();
+    WebSocketFrame {
+      header: WebSocketFrameHeader::new_header(payload.len(), OpCode::Pong),
+      payload,
+      mask: None
+    }
+  }
+
+  pub fn close_from(recv_frame: &WebSocketFrame) -> WebSocketFrame {
+    let body = if recv_frame.payload.len() > 0 {
+      let status_code = &recv_frame.payload[0..2];
+      let mut body = Vec::with_capacity(2);
+      let body_writed = body.write(status_code);
+      if body_writed.is_err() {
+        println!("Error writing status code to close frame body: {:?}", body_writed.err());
+      }
+
+      body
+    } else {
+      Vec::new()
+    };
+
+    WebSocketFrame { 
+      header: WebSocketFrameHeader::new_header(body.len(), OpCode::ConnectionClose),
+      mask: None, 
+      payload: body 
+    }
+  }
+
+  pub fn is_close(&self) -> bool {
+    self.header.opcode == OpCode::ConnectionClose
+  }
 }
 
 #[derive(Debug)]

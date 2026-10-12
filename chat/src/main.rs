@@ -9,6 +9,8 @@ use tokio::sync::Mutex;
 use rustc_serialize::base64::{ToBase64, STANDARD};
 use frame::{WebSocketFrame};
 
+use crate::frame::OpCode;
+
 extern crate sha1;
 extern crate rustc_serialize;
 
@@ -52,28 +54,16 @@ impl WebSocketClient {
             match self.state {
                 ClientState::AwaitingHandshake => self.write_handshake().await?,
                 ClientState::Connected => {
-                    self.read_frame(&mut buf).await?;
-                    // let frame = self.read_frame(&mut buf).await;
+                    if !self.read_frame(&mut buf).await? {
+                        break Ok(());
+                    }
 
-                    // if frame.is_err() {
-                    //     println!("Error reading frame from client {}: {:?}", self.id, frame.err());
-                    //     break;
-                    // }
-
-                    // let mut frame_data = Vec::new();
-                    // for frame in self.outgoing.iter() {
-                    //     if let Err(e) = frame.write(&mut frame_data) {
-                    //         println!("Error writing frame to client {}: {:?}", self.id, e);
-                    //         continue;
-                    //     }
-                    // }
-                    // self.socket.write_all(&frame_data).await?;
-                    // self.socket.flush().await?;
+                    if !self.write_frame().await? {
+                        break Ok(());
+                    }
                 }
             }
         }
-
-        Ok(())
     }   
 
     async fn read_headers(&mut self, buf: &mut [u8], read_bytes: &mut usize) -> Result<HashMap<String, String>, Box<dyn Error>> {
@@ -132,39 +122,76 @@ impl WebSocketClient {
         Ok(())
     }
 
-    async fn read_frame(&mut self, buf: &mut [u8]) -> Result<WebSocketFrame, Box<dyn Error>> {
+    async fn read_frame(&mut self, buf: &mut [u8]) -> Result<bool, Box<dyn Error>> {
         let n = self.socket.read(buf).await?;
+
         if n == 0 {
             println!("Client {} disconnected", self.id);
-            return Err("Client disconnected".into());
+            return Ok(false);
         }
 
         // entender como esse io::Cursor funciona
         let mut frame_data = std::io::Cursor::new(&buf[..n]);
         let frame = WebSocketFrame::read(&mut frame_data);
-        
+
+        println!("Frame received from client {}: {:?}", self.id, frame);
+
         match frame {
             Ok(frame) => {
-                println!("Frame received from client {}: {:?}", self.id, frame);
-                
-                let reply_frame = WebSocketFrame::from("Hi there!");
-                self.outgoing.push(reply_frame);
-
-                let mut frame_data = Vec::new();
-                for frame in self.outgoing.iter() {
-                    if let Err(e) = frame.write(&mut frame_data) {
-                        println!("Error writing frame to client {}: {:?}", self.id, e);
-                        continue;
-                    }
+                match frame.get_opcode() {
+                    OpCode::TextFrame => {
+                        let reply_frame = WebSocketFrame::from("Hi there!");
+                        self.outgoing.push(reply_frame);
+                    },
+                    OpCode::Ping => {
+                        println!("ping/pong");
+                        self.outgoing.push(WebSocketFrame::pong(&frame));
+                    },
+                    OpCode::ConnectionClose => {
+                        self.outgoing.push(WebSocketFrame::close_from(&frame));
+                    },
+                    _ => {}  
                 }
-                self.socket.write_all(&frame_data).await?;
-                self.socket.flush().await?;
-
-                Ok(frame)
             },
-            Err(e) => Err(e.into()),
+            Err(e) => {
+                println!("Error reading frame from client {}: {:?}", self.id, e);
+            }
         }
 
+        Ok(true)
+    }
+
+    async fn write_frame(&mut self) -> Result<bool, Box<dyn Error>> {
+        let mut close_conn = false;
+
+        for frame in self.outgoing.iter() {
+            let mut frame_data = Vec::new();
+            if let Err(e) = frame.write(&mut frame_data) {
+                println!("Error writing frame to client {}: {:?}", self.id, e);
+                continue;
+            }
+
+            if frame.is_close() {
+                close_conn = true;
+            }
+
+            self.socket.write_all(&frame_data).await?;
+            self.socket.flush().await?;
+        }
+
+        self.outgoing.clear();
+
+        if close_conn {
+            println!("Closing connection for client {}", self.id);
+        }
+
+        Ok(!close_conn)
+    }
+
+    pub async fn close(&mut self) {
+        self.socket.shutdown().await.unwrap_or_else(|e| {
+            println!("Error shutting down socket for client {}: {:?}", self.id, e);
+        });
     }
 }
 
@@ -218,6 +245,7 @@ impl WebSocketServer {
                 }
 
                 clients_ref.lock().await.remove(&id);
+                client.close().await;
                 println!("[id: {}] Client {} disconnected and removed from server", id, accept_addr);
             });
         }
