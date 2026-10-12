@@ -1,5 +1,5 @@
 use std::{io, iter, u16};
-use std::io::{ErrorKind, Read};
+use std::io::{ErrorKind, Read, Write};
 
 use byteorder::{ReadBytesExt, WriteBytesExt, BigEndian};
 
@@ -26,17 +26,6 @@ impl OpCode {
       _ => None,
     }
   }
-}
-
-#[derive(Debug)]
-pub struct WebSocketFrameHeader {
-  fin: bool,
-  rsv1: bool,
-  rsv2: bool,
-  rsv3: bool,
-  masked: bool,
-  opcode: OpCode,
-  payload_length: u8
 }
 
 #[derive(Debug)]
@@ -118,4 +107,75 @@ impl WebSocketFrame {
       *c = *c ^ mask[idx % 4];
     }
   }
+
+  pub fn write<W: Write>(&self, output: &mut W) -> io::Result<()> {
+    let hdr = Self::serialize_header(&self.header);
+    output.write_u16::<BigEndian>(hdr)?;
+
+    match self.header.payload_length {
+      PAYLOAD_LEN_U16 => output.write_u16::<BigEndian>(self.payload.len() as u16)?,
+      PAYLOAD_LEN_U64 => output.write_u64::<BigEndian>(self.payload.len() as u64)?,
+      _ => {}
+    }
+
+    output.write(&self.payload)?;
+    Ok(())
+  }
+  
+  fn serialize_header(hdr: &WebSocketFrameHeader) -> u16 {
+    let b1 = ((hdr.fin as u8) << 7) 
+                  | ((hdr.rsv1 as u8) << 6)
+                  | ((hdr.rsv2 as u8) << 5)
+                  | ((hdr.rsv3 as u8) << 4)
+                  | ((hdr.opcode as u8) & 0x0F);
+    
+    let b2 = ((hdr.masked as u8) << 7)
+              | ((hdr.payload_length as u8) & 0x7F);
+
+    ((b1 as u16) << 8) | (b2 as u16)
+  }
 }
+
+#[derive(Debug)]
+pub struct WebSocketFrameHeader {
+  fin: bool,
+  rsv1: bool,
+  rsv2: bool,
+  rsv3: bool,
+  masked: bool,
+  opcode: OpCode,
+  payload_length: u8
+}
+
+impl WebSocketFrameHeader {
+  fn new_header(len: usize, opcode: OpCode) -> WebSocketFrameHeader {
+    WebSocketFrameHeader {
+      fin: true,
+      rsv1: false, rsv2: false, rsv3: false,
+      masked: false,
+      opcode,
+      payload_length: Self::determine_len(len)
+    }
+  }
+
+  fn determine_len(len: usize) -> u8 {
+    if len < (PAYLOAD_LEN_U16 as usize) {
+      len as u8
+    } else if len < (u16::MAX as usize) {
+      PAYLOAD_LEN_U16
+    } else {
+      PAYLOAD_LEN_U64
+    }
+  }
+}
+
+impl <'a> From<&'a str> for WebSocketFrame {
+  fn from(payload: &str) -> WebSocketFrame {
+    WebSocketFrame {
+      header: WebSocketFrameHeader::new_header(payload.len(), OpCode::TextFrame),
+      payload: Vec::from(payload),
+      mask: None,
+    }
+  }
+}
+
