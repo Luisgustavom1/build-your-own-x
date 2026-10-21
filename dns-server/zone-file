@@ -1,0 +1,8 @@
+@ IN SOA ns1.example.com. hostmaster.example.com. (
+  2001062501 
+  21600 
+  3600 
+  604800 
+  86400
+)
+@ MX 10 mailhost2.example.com 45000

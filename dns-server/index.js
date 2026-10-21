@@ -13,10 +13,14 @@ async function processBindFile(filePath) {
     multiline: false,
     line: 0,
   };
+  let origin, ttl, containsTtl, previousTtl, previousName;
+  const records = [];
+
+  recordsType.forEach((recordType) => {
+    records[recordType] = [];
+  })
 
   for await (const line of rl) {
-    let origin, ttl, previousTtl, previousName;
-    let records = [];
 
     if (line.length > 1) {
       let commentedLine = false
@@ -64,46 +68,140 @@ async function processBindFile(filePath) {
                 soa.multiline = true;
                 soa.line++;
               }
-            }
+            }            
+          }
+
+        if (soa.multiline) {
+          switch (soa.line) {
+            case 2:
+              soa.serial = splittedLine[0];
+              break;
+            case 3:
+              soa.refresh = splittedLine[0];
+              break;
+            case 4:
+              soa.retry = splittedLine[0];
+              break;
+            case 5:
+              soa.expire = splittedLine[0];
+              break;
+            case 6:
+              soa.ttl = splittedLine[0];
+              break;
+            default:
+              break;
+          }
+
+          if (splittedLine.includes(')')) {
+            soa.multiline = false;
+          }
+
+          soa.line++;
+        }
+
+        recordsType.forEach((recordType) => {
+          const supportedResource = splittedLine.includes(recordType);
+          if (supportedResource) {
+            let rr;
+            [rr, previousName, previousTtl] = processRr(
+              splittedLine, 
+              containsTtl, 
+              previousTtl, 
+              previousName, 
+              origin, 
+              ttl
+            );
+            records[recordType].push(rr);
+          }
+        })
+      }
+    }
+  }
+
+  console.log(soa)
+  console.log(records)
+}
+
+function processRr(splittedLine, containsTtl, previousTtl, previousName, origin, ttl) {
+  const rr = {};
+  const totalLength = splittedLine.length;
+  const isMx = Number(splittedLine[totalLength - 2]);
+
+
+  switch (totalLength) {
+    case 5:
+      for (let index = 0; index < totalLength; index++) {
+        const element = splittedLine[index];
+        const IsNotIp = !element.includes('.')
+        if (IsNotIp && parseInt(element)) {
+          if (!isMx) {
+            containsTtl = true;
+            previousTtl = element;
+            splittedLine.splice(index, 1);
+          }
+          break;
         }
       }
-    }
 
-    if (soa.multiline) {
-      switch (soa.line) {
-        case 2:
-          soa.serial = splittedLine[0];
-          break;
-        case 3:
-          soa.refresh = splittedLine[0];
-          break;
-        case 4:
-          soa.retry = splittedLine[0];
-          break;
-        case 5:
-          soa.expire = splittedLine[0];
-          break;
-        case 6:
-          soa.ttl = splittedLine[0];
-          break;
-        default:
-          break;
+      if (!isMx) {
+        previousName = splittedLine[0];
+        rr.class = splittedLine[1];
+        rr.type = splittedLine[2];
+        rr.data = splittedLine[3];
       }
 
-      if (splittedLine.includes(')')) {
-        soa.multiline = false;
+      break;
+    
+    case 4:
+      for (let index = 0; index < totalLength; index++) {
+        const element = splittedLine[index];
+        const IsNotIp = !element.includes('.')
+        if (IsNotIp && parseInt(element)) {
+          if (!isMx) {
+            containsTtl = true;
+            previousTtl = element;
+            splittedLine.splice(index, 1);
+          }
+          break;
+        }
       }
 
-      soa.line++;
-    }
-
-    recordsType.forEach((recordType) => {
-      const supportedResource = splittedLine.includes(recordType);
-      if (supportedResource) {
-        let rr;
-        [rr, previousName, previousTtl] = processRr(splittedLine, containsTtl, previousTtl, previousName, origin, ttl);
-        records[recordType].push(rr);
+      if (containsTtl) { // withou name
+        rr.class = splittedLine[0];
+        rr.type = splittedLine[1];
+        rr.data = splittedLine[2];
+      } else {
+        if (isMx) {
+          previousName = '@';
+          rr.class = splittedLine[0];
+          rr.type = splittedLine[1];
+          rr.preference = splittedLine[2];
+          rr.data = splittedLine[3];
+        } else {
+          previousName = splittedLine[0];
+          rr.class = splittedLine[1];
+          rr.type = splittedLine[2];
+          rr.data = splittedLine[3];
+        }
       }
-    })
-  }  
+
+      break;
+    
+    case 3:
+      rr.class = splittedLine[0];
+      rr.type = splittedLine[1];
+      rr.data = splittedLine[2];
+      break;
+    
+    case 2:
+    default:
+      break;
+  }
+
+  rr.name = previousName || origin;
+  rr.ttl = previousTtl || ttl;
+
+  return [rr, previousName, previousTtl];
 }
+
+processBindFile('file');
