@@ -3,7 +3,7 @@ import readline from 'readline';
 
 const recordsType = ['NS', 'A', 'CNAME', 'MX'];
 
-async function processBindFile(filePath) {
+export async function processBindFile(filePath) {
   const fileStream = fs.createReadStream(filePath);
   const rl = readline.createInterface({
     input: fileStream,
@@ -68,8 +68,8 @@ async function processBindFile(filePath) {
                 soa.multiline = true;
                 soa.line++;
               }
-            }            
-          }
+            }
+        }
 
         if (soa.multiline) {
           switch (soa.line) {
@@ -104,11 +104,11 @@ async function processBindFile(filePath) {
           if (supportedResource) {
             let rr;
             [rr, previousName, previousTtl] = processRr(
-              splittedLine, 
-              containsTtl, 
-              previousTtl, 
-              previousName, 
-              origin, 
+              splittedLine,
+              containsTtl,
+              previousTtl,
+              previousName,
+              origin,
               ttl
             );
             records[recordType].push(rr);
@@ -118,8 +118,7 @@ async function processBindFile(filePath) {
     }
   }
 
-  console.log(soa)
-  console.log(records)
+  return records;
 }
 
 function processRr(splittedLine, containsTtl, previousTtl, previousName, origin, ttl) {
@@ -151,7 +150,7 @@ function processRr(splittedLine, containsTtl, previousTtl, previousName, origin,
       }
 
       break;
-    
+
     case 4:
       for (let index = 0; index < totalLength; index++) {
         const element = splittedLine[index];
@@ -186,13 +185,13 @@ function processRr(splittedLine, containsTtl, previousTtl, previousName, origin,
       }
 
       break;
-    
+
     case 3:
       rr.class = splittedLine[0];
       rr.type = splittedLine[1];
       rr.data = splittedLine[2];
       break;
-    
+
     case 2:
     default:
       break;
@@ -203,5 +202,3 @@ function processRr(splittedLine, containsTtl, previousTtl, previousName, origin,
 
   return [rr, previousName, previousTtl];
 }
-
-processBindFile('file');
