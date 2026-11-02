@@ -5,6 +5,8 @@
 #include <sys/types.h>
 #include <unistd.h>
 #include <string.h>
+#include <stdlib.h>
+#include <stdio.h>
 
 struct free_area {
   uint8_t marker;
@@ -222,7 +224,7 @@ bool l_free(void *ptr) {
   return true;
 }
 
-char *test_basic() {
+void test_basic_malloc() {
   char *ptr = (char *)l_malloc(100);
   area *first_block = (void *)ptr - sizeof(area);
   assert(first_block->in_use == true);
@@ -231,10 +233,9 @@ char *test_basic() {
   assert(first_block->marker == BLOCK_MARKER);
   *ptr = 'C';
   assert(*ptr == 'C');
-  return ptr;
 }
 
-void test_bigger_than_avaliable() {
+void test_bigger_than_avaliable_malloc_malloc() {
   // Test allocating more memory than is currently available
   uint16_t *ptr = (uint16_t *)l_malloc(5000);
   area *first_block = (void *)ptr - sizeof(area);
@@ -258,9 +259,42 @@ void test_bigger_than_avaliable() {
   assert(*((uint8_t *)ptr + 4998) == (2499 & 0xFF));
 }
 
+void test_free() {
+  uint8_t *first_end = (uint8_t *)l_malloc(2048);
+  area *first_block = (void *)first_end - sizeof(area);
+  assert(first_block->next != NULL);
+  assert(first_block->length == 2048);
+  area *second_block = first_block->next;
+  assert(second_block->marker == BLOCK_MARKER);
+  assert(second_block->in_use == false);
+  assert(second_block->next == NULL);
+  assert(second_block->length == PAGE_SIZE - sizeof(my_stats) - (2 * sizeof(area)) - first_block->length);
+
+  l_free(first_end);
+  assert(first_block->marker == BLOCK_MARKER);
+  assert(first_block->next == NULL);
+  assert(first_block->length == PAGE_SIZE - sizeof(my_stats) - sizeof(area));
+}
+
+void call_test(void (*test_func)(), const char *msg) {
+  pid_t pid = fork();
+  if (pid == 0) {
+    test_func();
+    exit(0);
+  } else {
+    int status;
+    waitpid(pid, &status, 0);
+    if (WIFEXITED(status)) {
+      printf("%s: Test passed\n", msg);
+    } else {
+      printf("%s: Test failed\n", msg);
+    }
+  }
+}
+
 int main() {
-  char *ptr = test_basic();
-  l_free(ptr);
-  test_bigger_than_avaliable();
+  call_test(test_basic_malloc, "Basic malloc");
+  call_test(test_free, "Free");
+  call_test(test_bigger_than_avaliable_malloc_malloc, "Bigger than available malloc");
   return 0;
 }
