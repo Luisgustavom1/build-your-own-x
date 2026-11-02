@@ -4,6 +4,7 @@
 #include <stdint.h>
 #include <sys/types.h>
 #include <unistd.h>
+#include <string.h>
 
 struct free_area {
   uint8_t marker;
@@ -25,6 +26,7 @@ typedef struct free_area area;
 
 const int MAGICAL_BYTES = 0x55;
 const int BLOCK_MARKER = 0xDD;
+const int PAGE_SIZE = 4096;
 
 char *heap_start = NULL;
 
@@ -42,6 +44,17 @@ area *find_last_block() {
     block = block->next;
   }
   return block;
+}
+
+area *find_previous_used_block(area *ptr) {
+  area *mov_ptr = ptr;
+  while (mov_ptr->prev != NULL) {
+    mov_ptr = mov_ptr->prev;
+    if (mov_ptr->in_use == true) {
+      return mov_ptr;
+    }
+  }
+  return NULL;
 }
 
 int *add_used_block(ssize_t size) {
@@ -82,7 +95,7 @@ int *add_used_block(ssize_t size) {
 
   smallest_block->in_use = true;
 
-  int must_have_size = smallest_block->length - size - sizeof(area) - 1;
+  int must_have_size = smallest_block->length - size - sizeof(area) - 1; // ***
   if (must_have_size <= 0) {
     sbrk(4096);
     malloc_header->pages += 1;
@@ -101,7 +114,7 @@ int *add_used_block(ssize_t size) {
     new_block->next->prev = new_block;
   }
   smallest_block->next = new_block;
-  smallest_block->length = size; //***
+  smallest_block->length = size; // ***
 
   malloc_header->lock = false;
   return (int *)((char *)smallest_block + sizeof(area));
@@ -135,7 +148,81 @@ int *l_malloc(ssize_t size) {
   return add_used_block(size);
 }
 
-void test_basic() {
+void reduce_heap_size_if_possible() {
+  area *last_block = find_last_block();
+  area *prev_used_block = find_previous_used_block(last_block);
+  if (prev_used_block == NULL) {
+    if (last_block->length > PAGE_SIZE) {
+      last_block->length = PAGE_SIZE;
+    }
+    prev_used_block = last_block;
+  }
+  void *new_end = (void *)prev_used_block + sizeof(area) + prev_used_block->length;
+  void *heap_end = sbrk(0);
+
+  while (new_end < heap_end - PAGE_SIZE) {
+    sbrk(-PAGE_SIZE);
+    heap_end = sbrk(0);
+    my_stats *malloc_header = get_malloc_header();
+    malloc_header->pages -= 1;
+  }
+
+  if (heap_end - new_end > sizeof(area) + 1) {
+    area *new_not_used_block = (area *)new_end;
+    new_not_used_block->marker = BLOCK_MARKER;
+    new_not_used_block->in_use = false;
+    new_not_used_block->prev = prev_used_block;
+    new_not_used_block->next = NULL;
+    new_not_used_block->length = heap_end - new_end - sizeof(area);
+    prev_used_block->next = new_not_used_block;
+  }
+}
+
+bool l_free(void *ptr) {
+  my_stats *malloc_header = get_malloc_header();
+  while (malloc_header->lock) {
+    sleep(1);
+  }
+  malloc_header->lock = true;
+  // free does not get the start of the block but the start of the data area of the block
+  area *block = ptr - sizeof(area);
+  if (block->marker != BLOCK_MARKER) {
+    return false;
+  } else {
+    block->in_use = false;
+    memset(ptr, 0, block->length);
+    if (block->next != NULL && (block->next)->in_use == false) {
+      area *not_used_next_block = block->next;
+      if (not_used_next_block != NULL) { // *** check if is unnecessary
+        block->next = not_used_next_block->next;
+        if (not_used_next_block->next != NULL) {
+          not_used_next_block->next->prev = block;
+        }
+      } else {
+        block->next = NULL;
+      }
+      block->length += sizeof(area) + not_used_next_block->length; // *** seila que porra é essa
+      memset((void *)not_used_next_block, 0, sizeof(area) + not_used_next_block->length);
+      malloc_header->blocks -= 1;
+    }
+
+    if (block->prev != NULL && (block->prev)->in_use == false) {
+      area *block_to_delete = block;
+      block = block->prev;
+      block->length += sizeof(area) + block_to_delete->length;
+      block->next = block_to_delete->next;
+      if (block->next != NULL) {
+        block->next->prev = block;
+      }
+      malloc_header->blocks -= 1;
+    }
+    reduce_heap_size_if_possible();
+  }
+  malloc_header->lock = false;
+  return true;
+}
+
+char *test_basic() {
   char *ptr = (char *)l_malloc(100);
   area *first_block = (void *)ptr - sizeof(area);
   assert(first_block->in_use == true);
@@ -144,6 +231,7 @@ void test_basic() {
   assert(first_block->marker == BLOCK_MARKER);
   *ptr = 'C';
   assert(*ptr == 'C');
+  return ptr;
 }
 
 void test_bigger_than_avaliable() {
@@ -171,7 +259,8 @@ void test_bigger_than_avaliable() {
 }
 
 int main() {
-  // test_basic();
+  char *ptr = test_basic();
+  l_free(ptr);
   test_bigger_than_avaliable();
   return 0;
 }
