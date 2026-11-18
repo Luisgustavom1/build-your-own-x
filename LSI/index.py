@@ -5,6 +5,8 @@ import nltk
 from nltk.corpus import stopwords
 from string import punctuation
 
+pi = math.pi
+
 docs = [
   "/Users/luisao/my-projects/build-your-own-x/LSI/Doc1.txt",
   "/Users/luisao/my-projects/build-your-own-x/LSI/Doc2.txt",
@@ -146,18 +148,137 @@ def transpose(A):
       ans[j][i] = A[i][j]
   return ans
 
+def matmul(A, X): 
+  if (type(X) != list and len(X.shape) == 1):
+    X = X.reshape(len(X), 1)
+
+  ans = np.zeros(
+    (len(A), len(X[0]))
+  )
+  for i in range(len(A)):
+    for j in range(len(X[0])):
+      for k in range(len(X)):
+        ans[i][j] += A[i][k] * X[k][j]
+
+  if(type(X) != list and ans.shape[1] == 1):
+    ans = ans.reshape((len(ans)))
+
+  return ans
+
 def SvD(Amatrix):
   originalMatrix = Amatrix.copy();
 
   ROWS = len(Amatrix)
   COLS = len(Amatrix[0])
 
-  return 1, 2, 3
+  if (ROWS > COLS):
+    Amatrix = transpose(Amatrix)
+
+  B = Amatrix.copy()
+  Amatrix = matmul(transpose(Amatrix), Amatrix)
+
+  ROWS = len(Amatrix)
+  COLS = len(Amatrix[0])
+
+  Amatrix = np.round(Amatrix, decimals=5)
+  diagonalMatrix = Amatrix.copy()
+  eigenVectorsMatrix = np.zeros((ROWS, ROWS))
+  for i in range(0, ROWS):
+    eigenVectorsMatrix[i][i] = 1
+
+  maximum = 1
+  while (maximum > 0.001):
+    maximum = math.fabs(diagonalMatrix[0][1])
+    iOfMaxElement = 0
+    jOfMaxElement = 1
+
+    for i in range(0, len(diagonalMatrix)):
+      for j in range(0, len(diagonalMatrix[0])):
+        val = math.fabs(diagonalMatrix[i][j])
+        if (i != j and val > maximum):
+          maximum = val
+          iOfMaxElement = i
+          jOfMaxElement = j
+
+    theta = 0
+    maxOriginalElement = diagonalMatrix[iOfMaxElement][jOfMaxElement]
+
+    if (
+      diagonalMatrix[iOfMaxElement][iOfMaxElement] == diagonalMatrix[jOfMaxElement][jOfMaxElement]
+    ):
+      theta = pi / 4 if maxOriginalElement > 0 else -pi / 4
+    else:
+      val = 2 * maxOriginalElement / (
+        diagonalMatrix[iOfMaxElement][iOfMaxElement] - diagonalMatrix[jOfMaxElement][jOfMaxElement]
+      )
+      theta = abs(0.5 * math.atan(val))
+
+    orthogonalMatrix = np.zeros((len(diagonalMatrix), len(diagonalMatrix[0])))
+    for i in range(0, len(orthogonalMatrix)):
+      orthogonalMatrix[i][i] = 1
+
+    orthogonalMatrix[iOfMaxElement][iOfMaxElement] = math.cos(theta)
+    orthogonalMatrix[jOfMaxElement][jOfMaxElement] = math.cos(theta)
+    orthogonalMatrix[iOfMaxElement][jOfMaxElement] = math.sin(theta)
+    orthogonalMatrix[jOfMaxElement][iOfMaxElement] = -1*math.sin(theta)
+
+    diagonalMatrix = matmul(transpose(orthogonalMatrix), diagonalMatrix)
+    diagonalMatrix = matmul(diagonalMatrix, orthogonalMatrix)
+    eigenVectorsMatrix = matmul(eigenVectorsMatrix, orthogonalMatrix)
+
+  # l1 is the list of eigen values which is extracted from the diagonal of the diagonalMatrix.
+  l1 = []
+  for i in range(0, len(diagonalMatrix)):
+    l1.append(diagonalMatrix[i][i])
+
+  # eigenVectorsMatrix is a list of eigenvectors -- VT
+  eigenVectorsMatrix=transpose(eigenVectorsMatrix) 
+  tmpList = list(eigenVectorsMatrix.copy())
+  for i in range(0, len(tmpList)):
+    tmpList[i] = list(tmpList[i])
+    tmpList[i].insert(0, l1[i])
+
+  tmpList.sort(reverse=True)
+  eigenValueslist = []
+  eigenVectorslist = []
+  for i in range(0, len(tmpList)):
+    eigenValueslist.append(tmpList[i].pop(0))
+    eigenVectorslist.append(tmpList[i])
+
+  eigenValuesArr = np.array(eigenValueslist)
+  eigenVectorsArr = np.array(eigenVectorslist)
+  Umatrix = np.zeros((len(B), len(B)))
+  for i in range(len(B)):
+    mul = matmul((B), (eigenVectorsArr[i]))
+    Umatrix[i] = mul / math.sqrt(eigenValuesArr[i])
+  
+  Umatrix = transpose(Umatrix)
+  finEigVals = []
+  for i in eigenValuesArr:
+    if (i > 1e-4):
+      finEigVals.append(i)
+
+  finSingVals = [math.sqrt(i) for i in finEigVals]
+  finSingVals = np.round(finSingVals, decimals=6)
+
+  VT = eigenVectorsArr
+  if (len(originalMatrix) > len(originalMatrix[0])):
+    tmp = Umatrix.copy()
+    Umatrix = transpose(eigenVectorsArr)
+    VT = transpose(tmp)
+
+  return Umatrix, finSingVals, VT
 
 l_2d = X.T.values.tolist()
 l_2d = np.array(l_2d)
 l_2d = transpose(l_2d)
 L, S, R = SvD(l_2d)
+
+# pretty print L
+for i in range(len(L)):
+  for j in range(len(L[0])):
+    print(f"{L[i][j]:.4f}", end="\t")
+  print()
 
 def find_k():
   # for i in range()
