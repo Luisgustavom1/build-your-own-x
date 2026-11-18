@@ -165,6 +165,58 @@ def matmul(A, X):
 
   return ans
 
+# The aim of this function is to use S to make a matrix A which contains n singular 
+# values on its diagonal. Rest all values are 0. Dimensions of A are m*n
+# Basically, we want to make A such that multiply(U,A,V) is possible
+def zero_padding(n, U, S): 
+  singular_values = []
+  for i in range(0, n):
+    singular_values.append(S[i])
+
+  for i in range(len(S) - n):
+    singular_values.append(0)
+
+  new_matrix = []
+  for i in range(0, len(S)):
+    temp = []
+    for j in range(0, len(S)):
+      if(j == i):
+        temp.append(float(singular_values[j]))
+      else:
+        temp.append(float(0))
+    new_matrix.append(temp)
+
+  new_row = []
+  for i in range(0, len(S)):
+    new_row.append(0)
+
+  for i in range(len(U) - len(S)):
+    new_matrix.append(new_row)
+
+  return new_matrix
+
+# produces matrix A with m*n dimensions
+def reconstruct(U, S, V, n):
+  # U - matrix mxm
+  # S - List of singular values
+  # V - matrix nxn
+  # n - number of singular values to use for reconstruction
+
+  A = zero_padding(n, U, S)
+
+  return np.round(matmul(matmul(U,A),V),decimals=3)
+
+# frobenius norm of a matrix
+# finds how similar two matrices are
+def frobenius(matrix, matrix_2):
+  temp1 = (matrix - matrix_2) ** 2
+  temp2 = matrix ** 2
+
+  sum1 = np.sum(temp1)
+  sum2 = np.sum(temp2)
+
+  return math.sqrt(sum1) / math.sqrt(sum2)
+
 def SvD(Amatrix):
   originalMatrix = Amatrix.copy();
 
@@ -274,15 +326,11 @@ l_2d = np.array(l_2d)
 l_2d = transpose(l_2d)
 L, S, R = SvD(l_2d)
 
-# pretty print L
-for i in range(len(L)):
-  for j in range(len(L[0])):
-    print(f"{L[i][j]:.4f}", end="\t")
-  print()
-
 def find_k():
-  # for i in range()
-  return 1
+  for i in range(1, len(S)):
+    f = frobenius(l_2d, reconstruct(L, S, R, i))
+    if f < 0.35:
+      return i
 
 def search(keywords):
   print(f"Searching for: {keywords}")
